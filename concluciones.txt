@@ -1,0 +1,8 @@
+1. Aunque ponga cuenta=9, no siempre es una carrera crítica.
+Con los sleep, el productor está esperando a que el valor cambie de 8 a 7. En ese momento continúa avanzando y aumenta otra vez el valor a 8. Y cuando el consumidor va a hacer la impresión, le suma 1 y por eso aparece el 9
+Al imprimir el buffer sí que se aprecian carreras críticas sin los sleep. Con los sleep nos está costando encontrar carreras críticas.
+
+2. Parece que funciona bien.
+
+3. Meter las conclusiones de los ejercicios optativos al final del informe
+
