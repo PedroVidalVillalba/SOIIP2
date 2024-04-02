@@ -1,7 +1,7 @@
 /**
  * Sistemas Operativos 2. Práctica 2.
- * Ejercicio 1
- * @date 12/03/2024
+ * Ejercicio 4
+ * @date 02/04/2024
  * @authors Falgueras Casarejos, Yago
  * @authors Vidal Villalba, Pedro
  */
@@ -11,6 +11,9 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include <fcntl.h>
 #include <sys/time.h>
 
 #define N 8
@@ -24,6 +27,7 @@
 #define fail(message)  { perror(message); exit(EXIT_FAILURE); }
 #define producer_printf(format, ...) ( printf(PRODUCER_COLOR format NO_COLOR, ##__VA_ARGS__) )
 #define consumer_printf(format, ...) ( printf(CONSUMER_COLOR format NO_COLOR, ##__VA_ARGS__) )
+
 
 void producer(void);
 void consumer(void);
@@ -59,27 +63,64 @@ void consume_item(int item, int total);
 
 void represent_buffer(int size);
 
-
 int* buffer;
-int* count;
+int count;
+sem_t* mutex;
+sem_t* full;
+sem_t* empty;
 char representation[3 * N + 2];
 
 int main(int argc, char** argv) {
+    int producers, consumers;
+    int i;
+
+    if (argc != 3) {
+        printf("ERROR: Número de parámetros incorrecto.\nUso: %s <productores> <consumidores>\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+
+    producers = (int) strtol(argv[1], NULL, 10);
+    consumers = (int) strtol(argv[2], NULL, 10);
+
+    if (producers <= 0 || consumers <= 0) fail("El número de consumidores y productores debe ser positivo");
+
 	/* Crear el buffer compartido */
 	buffer = (int *) mmap(NULL, N * sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 	if (buffer == MAP_FAILED) fail("Error al crear el buffer compartido");
-	/* Crear un espacio compartido para almacenar la cuenta */
-	count = (int *) mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-	if (count == MAP_FAILED) fail("Error al crear el contador compartido");
 
-	if (fork()) {
-		consumer();
-	} else {
-		producer();
-	}
+	/* Eliminar los semáforos que pudiese haber previamente con el nombre que se va a utilizar */
+	sem_unlink("/mutex");
+	sem_unlink("/full");
+	sem_unlink("/empty");
 
+	/* Abrir los semáforos */
+	mutex = sem_open("/mutex", O_CREAT, 0700, 1);
+	full = sem_open("/full", O_CREAT, 0700, 0);
+	empty = sem_open("/empty", O_CREAT, 0700, N);
+
+    for (i = 0; i < producers; i++) {
+        if (fork()) {
+            producer();
+            goto clean;
+        }
+    }
+    for (i = 0; i < consumers; i++) {
+        if (fork()) {
+            consumer();
+            goto clean;
+        }
+    }
+
+clean:
 	if (munmap(buffer, N * sizeof(int))) fail("Fallo al liberar el buffer");
-	if (munmap(count, sizeof(int))) fail("Fallo al liberar el contador");
+
+	sem_close(mutex);
+	sem_close(full);
+	sem_close(empty);
+
+	sem_unlink("/mutex");
+	sem_unlink("/full");
+	sem_unlink("/empty");
 
     exit(EXIT_SUCCESS);
 }
@@ -91,16 +132,18 @@ void producer() {
     struct timeval tv;
 
     gettimeofday(&tv, NULL);
-    srandom(tv.tv_usec);
+	srandom(tv.tv_usec);
 	while(iter < NUM_ITER){
+		sleep((int) random() % 4);      /* Espera aleatoria de 0, 1, 2 ó 3 segundos */
 		item = produce_item();          /* Generar el siguiente elemento */
-		while (*count == N);            /* Si el buffer está lleno, hacer espera activa */
+		sem_wait(empty);                /* Disminuir el contador de posiciones vacías */
+		sem_wait(mutex);                /* Entra en la región crítica */
 		insert_item(item);              /* Poner item en el buffer */
-        sleep((int) random() % 4);  /* Espera aleatoria de 0, 1, 2 ó 3 segundos */
-		(*count)++;                     /* Incrementar la cuenta de items en el buffer */
+		sem_post(mutex);                /* Sale de la región crítica */
+		sem_post(full);                 /* Incrementar el contador de posiciones ocupadas */
 
-        represent_buffer(*count);
-        producer_printf("Se ha añadido el item   "bold("%2d")" a la posición  "bold("%d")". Buffer: %s\n", item, *count, representation);
+        producer_printf("Se ha añadido el item   "bold("%2d")" a la posición  "bold("%d")". Buffer: %s\n", item, count + 1, representation);
+
 		iter++;
 	}
 }
@@ -114,11 +157,12 @@ void consumer() {
     gettimeofday(&tv, NULL);
     srandom(tv.tv_usec);
 	while(iter < NUM_ITER){
-		while (*count == 0);            /* Si el buffer está vacío, hacer espera activa */
+		sleep((int) random() % 4);      /* Espera aleatoria de 0, 1, 2 ó 3 segundos */
+		sem_wait(full);                 /* Disminuir el contador de posiciones ocupadas */
+		sem_wait(mutex);                /* Entra en la región crítica */
 		item = remove_item(&total);     /* Generar el siguiente elemento */
-        sleep((int) random() % 4);  /* Espera aleatoria de 0, 1, 2 ó 3 segundos */
-		(*count)--;                     /* Decrementar la cuenta de items en el buffer */
-        represent_buffer(*count);
+		sem_post(mutex);                /* Sale de la región crítica */
+		sem_post(empty);                /* Incrementar el contador de posiciones vacías */
 		consume_item(item, total);      /* Imprimir elemento */
 
 		iter++;
@@ -130,24 +174,28 @@ int produce_item() {
 }
 
 void insert_item(int item) {
-	buffer[*count] = item;
+	sem_getvalue(full, &count);
+	buffer[count] = item;
+    represent_buffer(count + 1);
 }
 
 int remove_item(int* total) {
 	int item;
 	int i;
 
-	item = buffer[*count - 1];
-	buffer[*count - 1] = 0; /* Eliminar el entero del buffer */
+	sem_getvalue(full, &count);
+	item = buffer[count];
+	buffer[count] = 0; /* Eliminar el entero del buffer */
 	*total = item;
-	for (i = N; i >= 0; i--) {
+	for (i = count - 1; i >= 0; i--) {
 		*total += buffer[i];
 	}
+    represent_buffer(count);
 	return item;
 }
 
 void consume_item(int item, int total) {
-	consumer_printf("Se ha eliminado el item "bold("%2d")" de la posición "bold("%d")". Buffer: %s. Suma total anterior: "bold("%2d")".\n", item , *count + 1, representation, total);
+	consumer_printf("Se ha eliminado el item "bold("%2d")" de la posición "bold("%d")". Buffer: %s. Suma total anterior: "bold("%2d")".\n", item , count + 1, representation, total);
 }
 
 void represent_buffer(int size) {
@@ -161,5 +209,3 @@ void represent_buffer(int size) {
     }
     representation[3 * N] = ']';
 }
-
-
