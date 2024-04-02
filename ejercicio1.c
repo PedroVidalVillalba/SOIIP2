@@ -57,11 +57,12 @@ int remove_item(int* total);
  */
 void consume_item(int item, int total);
 
-void print_buffer();
+void represent_buffer(int size);
 
 
 int* buffer;
 int* count;
+char representation[3 * N + 2];
 
 int main(int argc, char** argv) {
 	/* Crear el buffer compartido */
@@ -88,14 +89,14 @@ void producer() {
 
 	srandom(time(NULL));
 	while(iter < NUM_ITER){
-		sleep((int) random() % 4);  /* Espera aleatoria de 0, 1, 2 ó 3 segundos */
 		item = produce_item();          /* Generar el siguiente elemento */
 		while (*count == N);            /* Si el buffer está lleno, hacer espera activa */
+		sleep((int) random() % 4);  /* Espera aleatoria de 0, 1, 2 ó 3 segundos */
 		insert_item(item);              /* Poner item en el buffer */
 		(*count)++;                     /* Incrementar la cuenta de items en el buffer */
 
-        producer_printf("Se ha añadido el item   "bold("%2d")" a la posición  "bold("%d")".                 Buffer : ", item, *count);
-        print_buffer();
+        represent_buffer(*count);
+        producer_printf("Se ha añadido el item   "bold("%2d")" a la posición  "bold("%d")". Buffer: %s\n", item, *count, representation);
 		iter++;
 	}
 }
@@ -106,10 +107,11 @@ void consumer() {
 	int iter = 0;
 
 	while(iter < NUM_ITER){
-		sleep((int) random() % 4);  /* Espera aleatoria de 0, 1, 2 ó 3 segundos */
 		while (*count == 0);            /* Si el buffer está vacío, hacer espera activa */
+		sleep((int) random() % 4);  /* Espera aleatoria de 0, 1, 2 ó 3 segundos */
 		item = remove_item(&total);     /* Generar el siguiente elemento */
 		(*count)--;                     /* Decrementar la cuenta de items en el buffer */
+        represent_buffer(*count);
 		consume_item(item, total);      /* Imprimir elemento */
 
 		iter++;
@@ -138,20 +140,19 @@ int remove_item(int* total) {
 }
 
 void consume_item(int item, int total) {
-    consumer_printf("Se ha eliminado el item "bold("%2d")" de la posición "bold("%d")". Suma total: "bold("%2d")". Buffer: ", item , *count + 1, total);
-    print_buffer();
+	consumer_printf("Se ha eliminado el item "bold("%2d")" de la posición "bold("%d")". Buffer: %s. Suma total anterior: "bold("%2d")".\n", item , *count + 1, representation, total);
 }
 
-void print_buffer() {
+void represent_buffer(int size) {
     int i;
-    putchar('[');
-    for (i = 0; i < *count; i++) {
-        printf(bold("%2d")"|", buffer[i]);
+    representation[0] = '[';
+    for (i = 0; i < size; i++) {
+        sprintf(representation + 1 + 3 * i, "%2d|", buffer[i]);
     }
     for (; i < N; i++) {
-        printf("  |");
+        sprintf(representation + 1 + 3 * i, "  |");
     }
-    printf("\b]\n");
+    representation[3 * N] = ']';
 }
 
 

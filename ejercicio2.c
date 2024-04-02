@@ -16,7 +16,7 @@
 #include <fcntl.h>
 #include <time.h>
 
-#define N 8
+#define N 5
 #define NUM_ITER 20
 
 #define PRODUCER_COLOR  "\x1b[36m"
@@ -61,13 +61,14 @@ int remove_item(int* total);
  */
 void consume_item(int item, int total);
 
-void print_buffer();
+void represent_buffer(int size);
 
 int* buffer;
 int count;
 sem_t* mutex;
 sem_t* full;
 sem_t* empty;
+char representation[3 * N + 2];
 
 int main(int argc, char** argv) {
 	/* Crear el buffer compartido */
@@ -116,8 +117,7 @@ void producer() {
 		sem_post(mutex);                /* Sale de la región crítica */
 		sem_post(full);                 /* Incrementar el contador de posiciones ocupadas */
 
-        producer_printf("Se ha añadido el item   "bold("%2d")" a la posición  "bold("%d")".                 Buffer: ", item, count + 1);
-        print_buffer();
+        producer_printf("Se ha añadido el item   "bold("%2d")" a la posición  "bold("%d")". Buffer: %s\n", item, count + 1, representation);
 
 		iter++;
 	}
@@ -148,6 +148,7 @@ int produce_item() {
 void insert_item(int item) {
 	sem_getvalue(full, &count);
 	buffer[count] = item;
+    represent_buffer(count + 1);
 }
 
 int remove_item(int* total) {
@@ -161,22 +162,22 @@ int remove_item(int* total) {
 	for (i = count - 1; i >= 0; i--) {
 		*total += buffer[i];
 	}
+    represent_buffer(count);
 	return item;
 }
 
 void consume_item(int item, int total) {
-	consumer_printf("Se ha eliminado el item "bold("%2d")" de la posición "bold("%d")". Suma total: "bold("%2d")". Buffer: ", item , count + 1, total);
-    print_buffer();
+	consumer_printf("Se ha eliminado el item "bold("%2d")" de la posición "bold("%d")". Buffer: %s. Suma total anterior: "bold("%2d")".\n", item , count + 1, representation, total);
 }
 
-void print_buffer() {
+void represent_buffer(int size) {
     int i;
-    putchar('[');
-    for (i = 0; i < count; i++) {
-        printf(bold("%2d")"|", buffer[i]);
+    representation[0] = '[';
+    for (i = 0; i < size; i++) {
+        sprintf(representation + 1 + 3 * i, "%2d|", buffer[i]);
     }
     for (; i < N; i++) {
-        printf("  |");
+        sprintf(representation + 1 + 3 * i, "  |");
     }
-    printf("\b]\n");
+    representation[3 * N] = ']';
 }
