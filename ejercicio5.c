@@ -8,6 +8,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <sys/mman.h>
@@ -16,208 +17,312 @@
 #include <fcntl.h>
 #include <sys/time.h>
 
-#define BUFFER_PRODUCER 8
-#define BUFFER_CONSUMER 10
+#define SIZE_1 8
+#define SIZE_2 10
 #define NUM_ITER 20
 
-#define PRODUCER_COLOR  "\x1b[36m"
-#define CONSUMER_COLOR  "\x1b[31m"
+#define PRODUCER_COLOR_1  "\x1b[36m"
+#define CONSUMER_COLOR_1  "\x1b[31m"
+#define PRODUCER_COLOR_2  "\x1b[32m"
+#define CONSUMER_COLOR_2  "\x1b[33m"
 #define NO_COLOR        "\x1b[0m"
 #define bold(text) "\x1b[1m" text "\x1b[22m"
 
+/* Variables globales con los formatos de color para productor y consumidor */
+char* producer_color;
+char* consumer_color;
+
 #define fail(message)  { perror(message); exit(EXIT_FAILURE); }
-#define producer_printf(format, ...) ( printf(PRODUCER_COLOR format NO_COLOR, ##__VA_ARGS__) )
-#define consumer_printf(format, ...) ( printf(CONSUMER_COLOR format NO_COLOR, ##__VA_ARGS__) )
+#define producer_printf(format, ...) ( printf("%s [%d] " format NO_COLOR, producer_color, getpid(), ##__VA_ARGS__) )
+#define consumer_printf(format, ...) ( printf("%s [%d] " format NO_COLOR, consumer_color, getpid(), ##__VA_ARGS__) )
 
 
-void producer(void);
-void consumer(void);
+typedef struct {
+    int* buffer;
+    int size;
+    int count;
+    sem_t* mutex;
+    sem_t* full;
+    sem_t* empty;
+    char* name;
+    char* representation;
+} Stack;
+
+/**
+ * Crea un nuevo Stack en memoria compartida, de tamaño <u>size</u>,
+ * y con sus correspondientes semafóros identificados por el nombre
+ * (e.g., "/mutex_<name>").
+ *
+ * @param stack Dirección en la que guardar el nuevo Stack.
+ * @param size  Tamaño del buffer.
+ * @param name  Nombre con el que identificar a los semáforos del nuevo Stack.
+ */
+void create_stack(Stack* stack, int size, const char* name);
+
+/**
+ * Elimina un Stack de memoria, liberando el buffer de memoria compartida,
+ * su representación textual y cerrando y destruyendo sus semáforos asociados.
+ *
+ * @param stack Puntero al Stack a destruir.
+ */
+void delete_stack(Stack* stack);
+
+/**
+ * Actualiza la representación textual del <u>stack</u>.
+ *
+ * @param stack Stack a actualizar.
+ */
+void update_representation(Stack* stack);
+
+/**
+ * Produce un item y lo coloca en <u>stack</u>.
+ *
+ * @param stack Stack en el que colocar el item producido.
+ */
+void producer(Stack* stack);
+
+/**
+ * Consume un item de <u>stack</u>.
+ *
+ * @param stack Stack del que consumir el item.
+ */
+void consumer(Stack* stack);
 
 /**
  * Genera un entero aleatorio entre 0 y 10.
+ *
  * @return Entero entre 0 y 10
  */
 int produce_item(void);
 
 /**
- * Coloca el entero <u>item</u> en la posición del buffer
- * apuntada por count.
- * @param item	Entero a colocar en el buffer
+ * Coloca el entero <u>item</u> en <u>stack</u>.
+ *
+ * @param stack Stack en el que colocar el item.
+ * @param item	Entero a colocar en el stack.
+ *
  */
-void insert_item(int item);
+void insert_item(Stack* stack, int item);
 
 /**
- * Retira el último elemento del buffer. Acumula en <u>total</u>
+ * Retira el último elemento del <u>stack</u>. Acumula en <u>total</u>
  * la suma de todos los valores contenidos en ese momento en el buffer.
+ *
+ * @param stack Stack del que retirar el item.
  * @param total	Variable de salida para contener la suma de todos los elementos del buffer.
- * @return	Entero en la posición count-1 del buffer
+ *
+ * @return	Entero retirado del stack.
  */
-int remove_item(int* total);
+int remove_item(Stack* stack, int* total);
 
 /**
- * Muestra por pantalla el entero <u>item</u>, así como el resultado
- * de la suma de los valores contenidos en el buffer (<u>total</u>).
- * @param item	Último valor leído del buffer
- * @param total	Suma de los valores contenidos en el buffer
+ * Muestra por pantalla el entero consumido <u>item</u>, así como el resultado
+ * de la suma de los valores contenidos en el <u>stack</u> (<u>total</u>) y la 
+ * representación del stack actualizado.
+ *
+ * @param stack Stack del que se leyó el valor.
+ * @param item	Último valor leído del stack.
+ * @param total	Suma de los valores contenidos en el stack.
  */
-void consume_item(int item, int total);
-
-void represent_buffer(int size);
-
-/** Variables de cada buffer */
-
-int* buffer_producer;
-int count_producer;
-sem_t* mutex_producer;
-sem_t* full_producer;
-sem_t* empty_producer;
-char* representation_producer;
-
-int* buffer_consumer;
-int count_consumer;
-sem_t* mutex_consumer;
-sem_t* full_consumer;
-sem_t* empty_consumer;
-char* representation_consumer;
+void consume_item(Stack* stack, int item, int total);
 
 
-Stack stacks[NUM_BUFFERS];
 
 
 int main(int argc, char** argv) {
-
-    int iter=0;
+    Stack stack_1, stack_2;
+    int iter = 0;
     struct timeval tv;
 
-    /* Crear los buffers compartidos */
-    buffer_producer = (int *) mmap(NULL, BUFFER_PRODUCER * sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-    buffer_consumer = (int *) mmap(NULL, BUFFER_CONSUMER * sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-    if (buffer_producer == MAP_FAILED || buffer_consumer == MAP_FAILED) fail("Error al crear el buffer compartido");
-
-    /* Eliminar los semáforos que pudiese haber previamente con el nombre que se va a utilizar */
-    sem_unlink("/mutex_producer");
-    sem_unlink("/full_producer");
-    sem_unlink("/empty_producer");
-
-    sem_unlink("/mutex_consumer");
-    sem_unlink("/full_consumer");
-    sem_unlink("/empty_consumer");
-
-
-    /* Abrir los semáforos */
-    mutex_producer = sem_open("/mutex_producer", O_CREAT, 0700, 1);
-    full_producer = sem_open("/full_producer", O_CREAT, 0700, 0);
-    empty_producer = sem_open("/empty_producer", O_CREAT, 0700, N);
-
-    mutex_consumer = sem_open("/mutex_consumer", O_CREAT, 0700, 1);
-    full_consumer = sem_open("/full_consumer", O_CREAT, 0700, 0);
-    empty_consumer = sem_open("/empty_consumer", O_CREAT, 0700, N);
-
+    /* Crear los stacks compartidos */
+    create_stack(&stack_1, SIZE_1, "stack_1");
+    create_stack(&stack_2, SIZE_2, "stack_2");
 
 	if (fork()) { /* Código del hijo */
+        /* Aleatorizar la semilla para los valores aleatorios generados */
         gettimeofday(&tv, NULL);
         srandom(tv.tv_usec);
+
+        /* Ajustar los colores para la impresión */
+        consumer_color = CONSUMER_COLOR_1;
+        producer_color = PRODUCER_COLOR_2;
+
         while(iter < NUM_ITER){
-            consumer();
+            producer(&stack_2);
+            consumer(&stack_1);
 
             iter++;
         }
 	} else { /* Código del padre */
+        /* Aleatorizar la semilla para los valores aleatorios generados */
         gettimeofday(&tv, NULL);
         srandom(tv.tv_usec);
-		producer();
+
+        /* Ajustar los colores para la impresión */
+        producer_color = PRODUCER_COLOR_1;
+        consumer_color = CONSUMER_COLOR_2;
+
+        while(iter < NUM_ITER){
+            producer(&stack_1);
+            consumer(&stack_2);
+
+            iter++;
+        }
 	}
 
-	if (munmap(buffer_producer, BUFFER_PRODUCER * sizeof(int))) fail("Fallo al liberar el buffer");
-    if (munmap(buffer_consumer, BUFFER_CONSUMER * sizeof(int))) fail("Fallo al liberar el buffer");
-
-    /* Cerrar y eliminar semáforos */
-	sem_close(mutex_producer);
-	sem_close(full_producer);
-	sem_close(empty_producer);
-
-    sem_close(mutex_consumer);
-    sem_close(full_consumer);
-    sem_close(empty_consumer);
-
-    sem_unlink("/mutex_producer");
-    sem_unlink("/full_producer");
-    sem_unlink("/empty_producer");
-
-    sem_unlink("/mutex_consumer");
-    sem_unlink("/full_consumer");
-    sem_unlink("/empty_consumer");
+    /* Eliminar los stacks compartidos */
+    delete_stack(&stack_1);
+    delete_stack(&stack_2);
 
     exit(EXIT_SUCCESS);
 }
 
 
-void producer() {
+void producer(Stack* stack) {
 	int item;
 
     sleep((int) random() % 4);      /* Espera aleatoria de 0, 1, 2 ó 3 segundos */
     item = produce_item();          /* Generar el siguiente elemento */
-    sem_wait(empty_producer);                /* Disminuir el contador de posiciones vacías */
-    sem_wait(mutex_producer);                /* Entra en la región crítica */
-    insert_item(item);              /* Poner item en el buffer */
-    sem_post(mutex_producer);                /* Sale de la región crítica */
-    sem_post(full_producer);                 /* Incrementar el contador de posiciones ocupadas */
+    sem_wait(stack->empty);         /* Disminuir el contador de posiciones vacías */
+    sem_wait(stack->mutex);         /* Entra en la región crítica */
+    insert_item(stack, item);       /* Poner item en el stack */
+    sem_post(stack->mutex);         /* Sale de la región crítica */
+    sem_post(stack->full);          /* Incrementar el contador de posiciones ocupadas */
 
-    producer_printf("Se ha añadido el item   "bold("%2d")" a la posición  "bold("%d")". Buffer: %s\n", item, count_producer + 1, representation_producer);
+    /* Como ya aumentamos el contador, no tenemos que sumarle 1 para pasarlo a indexado en 1 */
+    producer_printf("Añadido el item   "bold("%2d")" a la posición  "bold("%d")". Buffer (%s): %s\n", item, stack->count, stack->name, stack->representation);
 }
 
-void consumer() {
+void consumer(Stack* stack) {
 	int item;
 	int total;
 
-    sleep((int) random() % 4);      /* Espera aleatoria de 0, 1, 2 ó 3 segundos */
-    sem_wait(full_consumer);                 /* Disminuir el contador de posiciones ocupadas */
-    sem_wait(mutex_consumer);                /* Entra en la región crítica */
-    item = remove_item(&total);     /* Generar el siguiente elemento */
-    sem_post(mutex_consumer);                /* Sale de la región crítica */
-    sem_post(empty_consumer);                /* Incrementar el contador de posiciones vacías */
-    consume_item(item, total);      /* Imprimir elemento */
-
-
+    sleep((int) random() % 4);              /* Espera aleatoria de 0, 1, 2 ó 3 segundos */
+    sem_wait(stack->full);                  /* Disminuir el contador de posiciones ocupadas */
+    sem_wait(stack->mutex);                 /* Entra en la región crítica */
+    item = remove_item(stack, &total);      /* Generar el siguiente elemento */
+    sem_post(stack->mutex);                 /* Sale de la región crítica */
+    sem_post(stack->empty);                 /* Incrementar el contador de posiciones vacías */
+    consume_item(stack, item, total);       /* Imprimir elemento */
 }
 
 int produce_item() {
     return ((int) random() % 11);
 }
 
-void insert_item(int item) {
-    sem_getvalue(full_producer, &count);
-    buffer_producer[count] = item;
-    represent_buffer(count + 1);
+void insert_item(Stack* stack, int item) {
+    /* Almacenar el número de items actualmente en el stack, según lo ve el proceso que inserta,
+     * en el campo count del stack */
+    sem_getvalue(stack->full, &(stack->count));
+    stack->buffer[(stack->count)++] = item; /* Insertar el item y aumentar el contador */
+    update_representation(stack);   /* Guardar la representación del buffer que el productor ve en este momento */
 }
 
-int remove_item(int* total) {
+int remove_item(Stack* stack, int* total) {
     int item;
     int i;
 
-    sem_getvalue(full_consumer, &count);
-    item = buffer_consumer[count];
-    buffer_consumer[count] = 0; /* Eliminar el entero del buffer */
+    /* Almacenar el número de items actualmente en el stack, según lo ve el proceso que elimina,
+     * en el campo count del stack */
+    sem_getvalue(stack->full, &(stack->count));
+    item = stack->buffer[stack->count];
+    stack->buffer[stack->count] = 0; /* Eliminar el entero del buffer */
+    /* Acumular la suma de los elementos del stack en total */
     *total = item;
-    for (i = count - 1; i >= 0; i--) {
-        *total += buffer_consumer[i];
+    for (i = stack->count - 1; i >= 0; i--) {
+        *total += stack->buffer[i];
     }
-    represent_buffer(count);
+    update_representation(stack);
+
     return item;
 }
 
-void consume_item(int item, int total) {
-    consumer_printf("Se ha eliminado el item "bold("%2d")" de la posición "bold("%d")". Buffer: %s. Suma total anterior: "bold("%2d")".\n", item , count + 1, representation, total);
+void consume_item(Stack* stack, int item, int total) {
+    consumer_printf("Eliminado el item "bold("%2d")" de la posición "bold("%d")". Buffer (%s): %s. Suma total anterior: "bold("%2d")".\n",
+            item , stack->count + 1, stack->name, stack->representation, total);
 }
 
-void represent_buffer(int size) {
-    int i;
-    representation[0] = '[';
-    for (i = 0; i < size; i++) {
-        sprintf(representation + 1 + 3 * i, "%2d|", buffer[i]);
-    }
-    for (; i < N; i++) {
-        sprintf(representation + 1 + 3 * i, "  |");
-    }
-    representation[3 * N] = ']';
+
+void create_stack(Stack* stack, int size, const char* name) {
+    char mutex_name[256] = {0};
+    char full_name[256] = {0};
+    char empty_name[256] = {0};
+
+    /* Crear el buffer en una zona de memoria compartida */
+    stack->buffer = (int *) mmap(NULL, size * sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    if (stack->buffer == MAP_FAILED) fail("Error al crear el buffer compartido");
+    stack->size = size;
+    stack->count = 0;   /* El buffer se inicia vacío */
+
+    /* Guardar el nombre del stack */
+    stack->name = (char *) calloc(strlen(name) + 1, sizeof(char)); 
+    memcpy(stack->name, name, strlen(name) * sizeof(char));
+    /* Crear los semáforos asociados al uso del buffer */
+    /* Contruir los nombres de cada semáforo a partir del nombre del stack */
+    sprintf(mutex_name, "/mutex_%s", name);
+    sprintf(full_name, "/full_%s", name);
+    sprintf(empty_name, "/empty_%s", name);
+
+    /* Eliminar los semáforos que pudiese haber previamente con el nombre que se va a utilizar */
+    sem_unlink(mutex_name);
+    sem_unlink(full_name);
+    sem_unlink(empty_name);
+
+    /* Crear los semáforos con sus valores iniciales */
+    stack->mutex = sem_open(mutex_name, O_CREAT, 0700, 1);
+    stack->full = sem_open(full_name, O_CREAT, 0700, 0);
+    stack->empty = sem_open(empty_name, O_CREAT, 0700, size);
+
+    /* Alojar memoria para la representación textual del stack */
+    /* Tres caracteres por item (2 del número + barra de separación/corchete final), corchete inicial y \0 final */
+    stack->representation = (char *) calloc(3 * size + 2, sizeof(char));    
 }
+
+void delete_stack(Stack* stack) {
+    char mutex_name[256] = {0};
+    char full_name[256] = {0};
+    char empty_name[256] = {0};
+
+    /* Liberar el buffer en memoria compartida */
+	if (munmap(stack->buffer, stack->size * sizeof(int))) fail("Fallo al liberar el buffer");
+    stack->buffer = NULL;
+    stack->size = -1;   /* Marcar con valores de error */
+    stack->count = -1;
+
+    /* Cerrar semáforos */
+	sem_close(stack->mutex);
+	sem_close(stack->full);
+	sem_close(stack->empty);
+
+    /* Contruir los nombres de cada semáforo a partir del nombre del stack */
+    sprintf(mutex_name, "/mutex_%s", stack->name);
+    sprintf(full_name, "/full_%s", stack->name);
+    sprintf(empty_name, "/empty_%s", stack->name);
+
+    /* Eliminar semáforos */
+    sem_unlink(mutex_name);
+    sem_unlink(full_name);
+    sem_unlink(empty_name);
+
+    /* Liberar las cadenas de texto */
+    free(stack->name);
+    stack->name = NULL;
+    free(stack->representation);
+    stack->representation = NULL;
+}
+
+void update_representation(Stack* stack) {
+    int i;
+
+    stack->representation[0] = '[';
+    /* Imprimir los items en el stack hasta count */
+    for (i = 0; i < stack->count; i++) {
+        sprintf(stack->representation + 1 + 3 * i, "%2d|", stack->buffer[i]);
+    }
+    /* Rellenar con huecos el resto de espacios */
+    for (; i < stack->size; i++) {
+        sprintf(stack->representation + 1 + 3 * i, "  |");
+    }
+    stack->representation[3 * stack->size] = ']';
+}
+
