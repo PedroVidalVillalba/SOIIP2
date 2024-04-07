@@ -128,7 +128,6 @@ void consume_item(Stack* stack, int item, int total);
 
 
 
-
 int main(int argc, char** argv) {
     Stack stack_1, stack_2;
     int iter = 0;
@@ -138,7 +137,7 @@ int main(int argc, char** argv) {
     create_stack(&stack_1, SIZE_1, "stack_1");
     create_stack(&stack_2, SIZE_2, "stack_2");
 
-	if (fork()) { /* Código del hijo */
+	if (!fork()) { /* Código del hijo */
         /* Aleatorizar la semilla para los valores aleatorios generados */
         gettimeofday(&tv, NULL);
         srandom(tv.tv_usec);
