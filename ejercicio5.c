@@ -16,6 +16,7 @@
 #include <semaphore.h>
 #include <fcntl.h>
 #include <sys/time.h>
+#include <errno.h>
 #include "shared_stack.h"
 #include "producer_consumer.h"
 
@@ -63,8 +64,8 @@ int main(int argc, char** argv) {
         producer_color = PRODUCER_COLOR_2;
 
         while(iter < NUM_ITER){
-            producer(&stack_2);
             consumer(&stack_1);
+            producer(&stack_2);
 
             iter++;
         }
@@ -95,29 +96,39 @@ int main(int argc, char** argv) {
 
 void producer(Stack* stack) {
 	int item;
+    int i, r;
 
     sleep((int) random() % 4);      /* Espera aleatoria de 0, 1, 2 ó 3 segundos */
-    item = produce_item();          /* Generar el siguiente elemento */
-    sem_wait(stack->empty);         /* Disminuir el contador de posiciones vacías */
-    sem_wait(stack->mutex);         /* Entra en la región crítica */
-    insert_item(stack, item);       /* Poner item en el stack */
-    sem_post(stack->mutex);         /* Sale de la región crítica */
-    sem_post(stack->full);          /* Incrementar el contador de posiciones ocupadas */
+    r = random() % 3 + 1;           /* Generar un número aleatorio entre 1 y 3 para insertar items */
+    for (i = 0; i < r; i++) {
+        item = produce_item();          /* Generar el siguiente elemento */
+        /* Intentar disminuir el contador de posiciones vacías; si valía 0, retornar para consumir */
+        if (sem_trywait(stack->empty) && errno == EAGAIN) return;         
+        sem_wait(stack->mutex);         /* Entra en la región crítica */
+        insert_item(stack, item);       /* Poner item en el stack */
+        sem_post(stack->mutex);         /* Sale de la región crítica */
+        sem_post(stack->full);          /* Incrementar el contador de posiciones ocupadas */
 
-    /* Como ya aumentamos el contador, no tenemos que sumarle 1 para pasarlo a indexado en 1 */
-    producer_printf("Añadido el item   "bold("%2d")" a la posición  "bold("%d")". Buffer (%s): %s\n", item, stack->count, stack->name, stack->representation);
+        /* Como ya aumentamos el contador, no tenemos que sumarle 1 para pasarlo a indexado en 1 */
+        producer_printf("Añadido el item   "bold("%2d")" a la posición  "bold("%d")". Buffer (%s): %s\n", item, stack->count, stack->name, stack->representation);
+    }
 }
 
 void consumer(Stack* stack) {
 	int item;
 	int total;
+    int i, r;
 
-    sleep((int) random() % 4);              /* Espera aleatoria de 0, 1, 2 ó 3 segundos */
-    sem_wait(stack->full);                  /* Disminuir el contador de posiciones ocupadas */
-    sem_wait(stack->mutex);                 /* Entra en la región crítica */
-    item = remove_item(stack, &total);      /* Generar el siguiente elemento */
-    sem_post(stack->mutex);                 /* Sale de la región crítica */
-    sem_post(stack->empty);                 /* Incrementar el contador de posiciones vacías */
-    consume_item(stack, item, total);       /* Imprimir elemento */
+    sleep((int) random() % 4);      /* Espera aleatoria de 0, 1, 2 ó 3 segundos */
+    r = random() % 3 + 1;           /* Generar un número aleatorio entre 1 y 3 para consumir items */
+    for (i = 0; i < r; i++) {
+        /* Intentar disminuir el contador de posiciones ocupadas; si valía 0, retornar para producir */
+        if (sem_trywait(stack->full) && errno == EAGAIN) return;         
+        sem_wait(stack->mutex);                 /* Entra en la región crítica */
+        item = remove_item(stack, &total);      /* Generar el siguiente elemento */
+        sem_post(stack->mutex);                 /* Sale de la región crítica */
+        sem_post(stack->empty);                 /* Incrementar el contador de posiciones vacías */
+        consume_item(stack, item, total);       /* Imprimir elemento */
+    }
 }
 
