@@ -16,20 +16,24 @@
 
 #define fail(message)  { perror(message); exit(EXIT_FAILURE); }
 
+/**
+ * Estructura en la que incluir toda la información relevante de un buffer compartido con
+ * sus correspondientes semáforos
+ */
 typedef struct {
-    int* buffer;
-    int size;
-    int count;
-    sem_t* mutex;
-    sem_t* full;
-    sem_t* empty;
-    char* name;
-    char* representation;
+    int* buffer;            /* Buffer en memoria compartida donde guardar los datos */
+    int size;               /* Tamaño del buffer */
+    int count;              /* Posición del último elemento que hay actualmente en el buffer, según lo ve cada proceso */
+    sem_t* mutex;           /* Semáforo que regula la entrada a la región crítica */
+    sem_t* full;            /* Semáforo que cuenta el número de posiciones utilizadas en el buffer */
+    sem_t* empty;           /* Semáforo que cuenta el número de posiciones vacías en el buffer */
+    char* name;             /* Nombre identificador del stack (se usa para nombrar los semáforos) */
+    char* representation;   /* Representación imprimible de los elementos del stack */
 } Stack;
 
 /**
  * Crea un nuevo Stack en memoria compartida, de tamaño <u>size</u>,
- * y con sus correspondientes semafóros identificados por el nombre
+ * y con sus correspondientes semáfóros identificados por el nombre
  * (e.g., "/mutex_<name>").
  *
  * @param stack Dirección en la que guardar el nuevo Stack.

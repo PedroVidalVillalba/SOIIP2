@@ -21,7 +21,11 @@ int produce_item() {
 void insert_item(Stack* stack, int item) {
     /* Almacenar el número de items actualmente en el stack, según lo ve el proceso que inserta,
      * en el campo count del stack */
-    sem_getvalue(stack->full, &(stack->count));
+    /* El productor sabe cuánto vale el semáforo empty cuando entra en la región crítica,
+     * porque es él quien lo baja, pero no tiene control del semáforo full, ya que es posible
+     * que un consumidor lo haya bajado o no antes de que el consumidor entre a la región crítica */
+    sem_getvalue(stack->empty, &(stack->count));
+    stack->count = stack->size - 1 - stack->count;
     stack->buffer[(stack->count)++] = item; /* Insertar el item y aumentar el contador */
     update_representation(stack);   /* Guardar la representación del buffer que el productor ve en este momento */
 }
